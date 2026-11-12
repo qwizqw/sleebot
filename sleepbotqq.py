@@ -185,6 +185,30 @@ def show_stats(message):
     )
     bot.reply_to(message, stats_text, parse_mode="Markdown")
 
+@bot.message_handler(commands=['q'])
+def show_all_records(message):
+    """Выводит все записи пользователя с учётом +3 часов"""
+    context = load_context()
+    user_context = context.get(str(message.chat.id), [])
+
+    if not user_context:
+        bot.reply_to(message, "📭 У тебя пока нет записей. Начни писать мне!")
+        return
+
+    # Формируем список записей со сдвигом +3 часа
+    records_text = "📋 **Твои записи (время +3ч):**\n\n"
+    for entry in user_context:
+        # Берём время из записи и прибавляем 3 часа
+        original_time = datetime.fromisoformat(entry["timestamp"])
+        shifted_time = original_time + timedelta(hours=3)
+        time_str = shifted_time.strftime("%d.%m %H:%M")
+        records_text += f"- [{time_str}] {entry['text']}\n"
+
+    # Отправляем, если текст не пустой
+    if records_text.strip():
+        bot.reply_to(message, records_text, parse_mode="Markdown")
+    else:
+        bot.reply_to(message, "Не удалось сформировать список.")
 
 @bot.message_handler(commands=['clear'])
 def clear_context(message):
@@ -198,21 +222,28 @@ def clear_context(message):
         bot.reply_to(message, "Контекст уже пуст.")
 
 
-@bot.message_handler(func=lambda message: True)
+@bot.message_handler(content_types=['text'])
 def handle_message(message):
-    """Обрабатывает все обычные сообщения"""
+    """Обрабатывает обычные текстовые сообщения через ИИ"""
     user_id = message.chat.id
-    user_text = message.text
+    user_text = message.text.strip()
 
-    # Сохраняем сообщение в контекст
+    # Игнорируем пустые сообщения и команды (команды обрабатываются отдельно)
+    if not user_text or user_text.startswith('/'):
+        return
+
+    # Сохраняем в контекст
     add_to_context(user_id, user_text)
 
-    # Получаем ответ от нейросети
+    # Получаем ответ от ИИ
     ai_response = get_ai_response(user_text, user_id)
+
+    # ЗАЩИТА: если ИИ вернул пустоту
+    if not ai_response or not ai_response.strip():
+        ai_response = "🤔 Хм, не знаю что ответить. Попробуй переформулировать."
 
     # Отправляем ответ
     bot.reply_to(message, ai_response)
-
 
 # ==========================================================
 # ЗАПУСК
