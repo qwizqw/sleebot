@@ -1,35 +1,26 @@
-import os
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
 import telebot
 import json
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
-import os
 from groq import Groq
+from flask import Flask, request
 
 # ==========================================================
 # НАСТРОЙКИ
 # ==========================================================
 
-# Telegram Bot Token (от @BotFather)
+# Ключи берутся из переменных окружения (безопасно!)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# Groq API Key (бесплатный с console.groq.com)
-# (Я взял тот, что был у вас в комментарии с gsk_)
-
-# Путь к файлам (для PythonAnywhere используйте /home/username/)
+# Путь к файлам данных
 DATA_DIR = Path("data")
 CONTEXT_FILE = DATA_DIR / "context.json"
-
-# Создаем папку для данных
 DATA_DIR.mkdir(exist_ok=True)
 
-# ==========================================================
-# ИНИЦИАЛИЗАЦИЯ
-# ==========================================================
-
-bot = telebot.TeleBot(BOT_TOKEN)
+# Инициализация бота (threaded=False важен для Webhook)
+bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 
@@ -38,7 +29,6 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 # ==========================================================
 
 def load_context():
-    """Загружает контекст из файла"""
     if CONTEXT_FILE.exists():
         with open(CONTEXT_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -46,48 +36,40 @@ def load_context():
 
 
 def save_context(context):
-    """Сохраняет контекст в файл"""
     with open(CONTEXT_FILE, "w", encoding="utf-8") as f:
         json.dump(context, f, ensure_ascii=False, indent=2)
 
 
 def add_to_context(user_id, message_text):
-    """Добавляет сообщение в контекст пользователя"""
     context = load_context()
-
     if str(user_id) not in context:
         context[str(user_id)] = []
 
-    # Добавляем новое сообщение с временной меткой
     context[str(user_id)].append({
         "timestamp": datetime.now().isoformat(),
         "text": message_text
     })
 
-    # Оставляем только последние 10 дней
-    cutoff_date = datetime.now() - timedelta(days=10)
+    # Оставляем записи только за последние 15 дней
+    cutoff_date = datetime.now() - timedelta(days=15)
     context[str(user_id)] = [
         entry for entry in context[str(user_id)]
         if datetime.fromisoformat(entry["timestamp"]) > cutoff_date
     ]
-
     save_context(context)
-    return context[str(user_id)]
 
 
 def get_context_summary(user_id):
-    """Формирует краткое резюме контекста для нейросети"""
     context = load_context()
     user_context = context.get(str(user_id), [])
 
     if not user_context:
         return "Это первое сообщение пользователя."
 
-    summary = "Последние записи пользователя (до 10 дней):\n\n"
-    for entry in user_context[-20:]:  # Последние 20 записей
+    summary = "История записей пользователя:\n"
+    for entry in user_context[-30:]:
         date = datetime.fromisoformat(entry["timestamp"]).strftime("%d.%m %H:%M")
         summary += f"[{date}] {entry['text']}\n"
-
     return summary
 
 
@@ -96,94 +78,57 @@ def get_context_summary(user_id):
 # ==========================================================
 
 def get_ai_response(user_message, user_id):
-    """Отправляет запрос в Groq API с контекстом"""
-
-    # Получаем контекст пользователя
     context_summary = get_context_summary(user_id)
 
-    # Системный промпт с инструкциями
     system_prompt = f"""Ты — умный персональный помощник и дневник.
-    ПРАВИЛА:
-    1. ВСЕГДА отвечай полностью, не обрывай текст на полуслове.
-    2. Если пользователь просит вывести записи, выводи их списком. 
-    3. ВАЖНО: Пользователь попросил сдвигать время в записях на +3 часа. Всегда прибавляй 3 часа к времени из контекста при выводе.
-    4. Анализируй сон и привычки, давай короткие и полезные советы (2-4 предложения).
-    5. Отвечай дружелюбно, по-русски.
+ПРАВИЛА:
+1. ВСЕГДА отвечай полностью, НИКОГДА не обрывай текст на полуслове.
+2. Анализируй сон и привычки, давай короткие и полезные советы (2-4 предложения).
+3. Отвечай дружелюбно, по-русски.
+4. Помни: пользователь просил сдвигать время в записях на +3 часа при выводе, но в этом промпте просто анализируй факты.
 
-    Контекст записей пользователя:
-    {context_summary}
-    """
-
-    # Формируем сообщение для API
-    messages = [
-        {"role": "system", "content": system_prompt + context_summary},
-        {"role": "user", "content": user_message}
-    ]
+Контекст записей пользователя:
+{context_summary}
+"""
 
     try:
-        # Отправляем запрос в Groq
         completion = groq_client.chat.completions.create(
-            model="openai/gpt-oss-120b",  # <-- Самая мощная доступная модель
-            messages=messages,
+            model="openai/gpt-oss-120b",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ],
             temperature=0.7,
-            max_tokens=500,
+            max_tokens=2000,  # Увеличили лимит, чтобы не обрывалось
             top_p=1,
             stream=False,
         )
-
         return completion.choices[0].message.content
-
     except Exception as e:
         print(f"Ошибка Groq API: {e}")
         return "⚠️ Произошла ошибка при обработке. Попробуйте позже."
 
 
 # ==========================================================
-# ОБРАБОТКА СООБЩЕНИЙ
+# ОБРАБОТКА КОМАНД И СООБЩЕНИЙ
 # ==========================================================
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    """Приветственное сообщение"""
-    welcome_text = (
-        "🧠 Привет! Я твой умный дневник с нейросетью.\n\n"
-        "Я буду:\n"
-        "• Запоминать всё, что ты пишешь (до 10 дней)\n"
-        "• Анализировать твои привычки и паттерны\n"
-        "• Давать полезные советы\n"
-        "• Поддерживать тебя!\n\n"
-        "Просто пиши мне о своём дне, мыслях, планах.\n"
-        "Например:\n"
-        "• 'Сегодня спал 6 часов, чувствую себя разбитым'\n"
-        "• 'Сделал тренировку, горжусь собой!'\n"
-        "• 'Не могу сосредоточиться на работе'\n\n"
-        "Попробуй написать что-нибудь!"
-    )
-    bot.reply_to(message, welcome_text)
+    bot.reply_to(message,
+                 "🧠 Привет! Я твой умный дневник.\n\nПросто пиши мне о своём дне. \nИспользуй /q, чтобы вывести все записи (время будет +3ч).")
 
 
-@bot.message_handler(commands=['stats'])
-def show_stats(message):
-    """Показывает статистику записей"""
+@bot.message_handler(commands=['clear'])
+def clear_context(message):
     context = load_context()
-    user_context = context.get(str(message.chat.id), [])
+    if str(message.chat.id) in context:
+        del context[str(message.chat.id)]
+        save_context(context)
+        bot.reply_to(message, "🗑️ Память очищена! Начинаем с чистого листа.")
+    else:
+        bot.reply_to(message, "Память уже пуста.")
 
-    if not user_context:
-        bot.reply_to(message, "📊 Пока нет записей. Начни писать мне!")
-        return
-
-    total_entries = len(user_context)
-    first_date = datetime.fromisoformat(user_context[0]["timestamp"]).strftime("%d.%m.%Y")
-    last_date = datetime.fromisoformat(user_context[-1]["timestamp"]).strftime("%d.%m.%Y")
-
-    stats_text = (
-        f"📊 **Твоя статистика:**\n\n"
-        f"📝 Всего записей: {total_entries}\n"
-        f"📅 Первая запись: {first_date}\n"
-        f"📅 Последняя запись: {last_date}\n\n"
-        f"Я анализирую последние 10 дней и готов давать советы!"
-    )
-    bot.reply_to(message, stats_text, parse_mode="Markdown")
 
 @bot.message_handler(commands=['q'])
 def show_all_records(message):
@@ -195,31 +140,17 @@ def show_all_records(message):
         bot.reply_to(message, "📭 У тебя пока нет записей. Начни писать мне!")
         return
 
-    # Формируем список записей со сдвигом +3 часа
-    records_text = "📋 **Твои записи (время +3ч):**\n\n"
+    records_text = "📋 **Твои записи (время сдвинуто на +3ч):**\n\n"
     for entry in user_context:
-        # Берём время из записи и прибавляем 3 часа
         original_time = datetime.fromisoformat(entry["timestamp"])
         shifted_time = original_time + timedelta(hours=3)
         time_str = shifted_time.strftime("%d.%m %H:%M")
         records_text += f"- [{time_str}] {entry['text']}\n"
 
-    # Отправляем, если текст не пустой
     if records_text.strip():
         bot.reply_to(message, records_text, parse_mode="Markdown")
     else:
         bot.reply_to(message, "Не удалось сформировать список.")
-
-@bot.message_handler(commands=['clear'])
-def clear_context(message):
-    """Очищает контекст пользователя"""
-    context = load_context()
-    if str(message.chat.id) in context:
-        del context[str(message.chat.id)]
-        save_context(context)
-        bot.reply_to(message, "🗑️ Контекст очищен! Начинаем с чистого листа.")
-    else:
-        bot.reply_to(message, "Контекст уже пуст.")
 
 
 @bot.message_handler(content_types=['text'])
@@ -228,28 +159,38 @@ def handle_message(message):
     user_id = message.chat.id
     user_text = message.text.strip()
 
-    # Игнорируем пустые сообщения и команды (команды обрабатываются отдельно)
+    # Игнорируем пустые сообщения и команды (команды обрабатываются выше)
     if not user_text or user_text.startswith('/'):
         return
 
-    # Сохраняем в контекст
     add_to_context(user_id, user_text)
-
-    # Получаем ответ от ИИ
     ai_response = get_ai_response(user_text, user_id)
 
     # ЗАЩИТА: если ИИ вернул пустоту
     if not ai_response or not ai_response.strip():
         ai_response = "🤔 Хм, не знаю что ответить. Попробуй переформулировать."
 
-    # Отправляем ответ
     bot.reply_to(message, ai_response)
 
+
 # ==========================================================
-# ЗАПУСК
+# НАСТРОЙКА WEBHOOK (для стабильной работы на PythonAnywhere)
 # ==========================================================
 
+app = Flask(__name__)
+
+
+@app.route('/' + os.getenv("BOT_TOKEN"), methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return '', 200
+    else:
+        return 'Error', 403
+
+
 if __name__ == "__main__":
-    print("🤖 Умный дневник запущен...")
-    print("Бот анализирует контекст до 10 дней и дает советы!")
-    bot.polling(none_stop=True)
+    # Запускаем веб-сервер на порту 5000 (требование PythonAnywhere)
+    app.run(host='0.0.0.0', port=5000, debug=False)
