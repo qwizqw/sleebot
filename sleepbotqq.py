@@ -3,7 +3,6 @@ import json
 import os
 import urllib.request
 import urllib.parse
-import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path
 from groq import Groq
@@ -23,12 +22,13 @@ DATA_DIR.mkdir(exist_ok=True)
 
 # Создаем файл профиля, если его нет
 if not PROFILE_FILE.exists():
-    PROFILE_FILE.write_text("Студент, изучаю Python, умею делать Telegram-ботов, ищу стажировку или Junior позицию.",
-                            encoding="utf-8")
+    PROFILE_FILE.write_text(
+        "Студент, изучаю Python, умею делать Telegram-ботов, ищу стажировку или Junior позицию.",
+        encoding="utf-8",
+    )
 
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 groq_client = Groq(api_key=GROQ_API_KEY)
-
 
 # ==========================================================
 # РАБОТА С КОНТЕКСТОМ И ПРОФИЛЕМ
@@ -40,11 +40,9 @@ def load_context():
             return json.load(f)
     return {}
 
-
 def save_context(context):
     with open(CONTEXT_FILE, "w", encoding="utf-8") as f:
         json.dump(context, f, ensure_ascii=False, indent=2)
-
 
 def add_to_context(user_id, message_text):
     context = load_context()
@@ -53,7 +51,7 @@ def add_to_context(user_id, message_text):
 
     context[str(user_id)].append({
         "timestamp": datetime.now().isoformat(),
-        "text": message_text
+        "text": message_text,
     })
 
     cutoff_date = datetime.now() - timedelta(days=15)
@@ -63,44 +61,42 @@ def add_to_context(user_id, message_text):
     ]
     save_context(context)
 
-
 def get_profile():
     return PROFILE_FILE.read_text(encoding="utf-8").strip()
-
 
 def save_profile(text):
     PROFILE_FILE.write_text(text, encoding="utf-8")
 
-
 # ==========================================================
-# ПОИСК ВАКАНСИЙ HH.RU (Безопасный RSS метод)
+# ПОИСК ВАКАНСИЙ HH.RU (Официальный API)
 # ==========================================================
 
 def search_hh_vacancies(query):
     try:
-        # Кодируем запрос для URL
         encoded_query = urllib.parse.quote(query)
-        # Используем официальный API hh.ru (бесплатный, без ограничений по времени)
-        url = f"https://api.hh.ru/vacancies?text={encoded_query}&per_page=5&order_by=publication_time"
+        url = (
+            f"https://api.hh.ru/vacancies?text={encoded_query}"
+            f"&per_page=5&order_by=publication_time"
+        )
 
-        req = urllib.request.Request(url, headers={'User-Agent': 'SleepBot/1.0 (qwizqw@example.com)'})
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "SleepBot/1.0 (qwizqw@example.com)"},
+        )
         with urllib.request.urlopen(req) as response:
-            data = json.loads(response.read().decode('utf-8'))
+            data = json.loads(response.read().decode("utf-8"))
 
         vacancies = []
+        for item in data.get("items", [])[:5]:
+            title = item.get("name", "Без названия")
+            employer = item.get("employer", {}).get("name", "Неизвестный работодатель")
+            link = item.get("alternate_url", "")
 
-        # Берем до 5 вакансий
-        for item in data.get('items', [])[:5]:
-            title = item.get('name', 'Без названия')
-            employer = item.get('employer', {}).get('name', 'Неизвестный работодатель')
-            link = item.get('alternate_url', '')
-
-            # Зарплата (если указана)
-            salary = item.get('salary')
+            salary = item.get("salary")
             if salary:
-                salary_from = salary.get('from', '')
-                salary_to = salary.get('to', '')
-                currency = salary.get('currency', 'RUR')
+                salary_from = salary.get("from")
+                salary_to = salary.get("to")
+                currency = salary.get("currency", "RUR")
                 if salary_from and salary_to:
                     salary_text = f"{salary_from}-{salary_to} {currency}"
                 elif salary_from:
@@ -112,15 +108,17 @@ def search_hh_vacancies(query):
             else:
                 salary_text = "Зарплата не указана"
 
-            # Город
-            area = item.get('area', {}).get('name', 'Не указан')
+            area = item.get("area", {}).get("name", "Не указан")
 
-            vacancies.append(f"📌 {title}\n🏢 {employer}\n📍 {area}\n💰 {salary_text}\n🔗 {link}")
+            vacancies.append(
+                f"📌 {title}\n🏢 {employer}\n📍 {area}\n💰 {salary_text}\n🔗 {link}"
+            )
 
         return vacancies
     except Exception as e:
         print(f"Ошибка поиска hh.ru: {e}")
         return []
+
 # ==========================================================
 # ИНТЕГРАЦИЯ С НЕЙРОСЕТЬЮ
 # ==========================================================
@@ -146,7 +144,7 @@ def get_ai_response(user_message, user_id, is_job_search=False, vacancies_text="
 {vacancies_text}
 
 Твоя задача:
-1. Кратко (1 предложение на каждую) оцени, насколько вакансия подходит профилю пользователя.
+1. Кратко (1-2 предложения на каждую) оцени, насколько вакансия подходит профилю пользователя.
 2. Выбери ОДНУ самую подходящую вакансию.
 3. Напиши для неё готовое, профессиональное и живое сопроводительное письмо, которое пользователь сможет просто скопировать и вставить на hh.ru. Не используй шаблонные фразы вроде "Я увидел вашу вакансию". Пиши конкретно по делу."""
     else:
@@ -165,7 +163,7 @@ def get_ai_response(user_message, user_id, is_job_search=False, vacancies_text="
             model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
+                {"role": "user", "content": user_message},
             ],
             temperature=0.7,
             max_tokens=2000,
@@ -177,18 +175,22 @@ def get_ai_response(user_message, user_id, is_job_search=False, vacancies_text="
         print(f"Ошибка Groq API: {e}")
         return "⚠️ Ошибка нейросети. Попробуйте позже."
 
-
 # ==========================================================
 # ОБРАБОТКА КОМАНД И СООБЩЕНИЙ
 # ==========================================================
 
-@bot.message_handler(commands=['start'])
+@bot.message_handler(commands=["start"])
 def send_welcome(message):
-    bot.reply_to(message,
-                 "🧠 Привет! Я твой умный помощник.\n\n📝 Пиши о своём дне (я всё запомню).\n🔍 Используй /find <запрос>, чтобы найти вакансии на hh.ru и получить готовое сопроводительное письмо.\n⚙️ Используй /profile <текст>, чтобы обновить свои навыки.")
+    bot.reply_to(
+        message,
+        "🧠 Привет! Я твой умный помощник.\n\n"
+        "📝 Пиши о своём дне (я всё запомню).\n"
+        "🔍 Используй /find <запрос>, чтобы найти вакансии на hh.ru и получить готовое сопроводительное письмо.\n"
+        "⚙️ Используй /profile <текст>, чтобы обновить свои навыки.\n"
+        "📋 Используй /q, чтобы вывести все свои записи (время +3ч).",
+    )
 
-
-@bot.message_handler(commands=['clear'])
+@bot.message_handler(commands=["clear"])
 def clear_context(message):
     context = load_context()
     if str(message.chat.id) in context:
@@ -196,8 +198,7 @@ def clear_context(message):
         save_context(context)
         bot.reply_to(message, "🗑️ Память очищена!")
 
-
-@bot.message_handler(commands=['q'])
+@bot.message_handler(commands=["q"])
 def show_all_records(message):
     context = load_context()
     user_context = context.get(str(message.chat.id), [])
@@ -214,52 +215,59 @@ def show_all_records(message):
 
     bot.reply_to(message, records_text, parse_mode="Markdown")
 
-
-@bot.message_handler(commands=['profile'])
+@bot.message_handler(commands=["profile"])
 def set_profile(message):
-    # Берем весь текст после команды /profile
-    new_profile = message.text.replace('/profile', '', 1).strip()
+    new_profile = message.text.replace("/profile", "", 1).strip()
     if new_profile:
         save_profile(new_profile)
-        bot.reply_to(message, f"✅ Профиль обновлен!\n\nТеперь я знаю о тебе: \n_{new_profile}_", parse_mode="Markdown")
+        bot.reply_to(
+            message,
+            f"✅ Профиль обновлен!\n\nТеперь я знаю о тебе: \n_{new_profile}_",
+            parse_mode="Markdown",
+        )
     else:
-        bot.reply_to(message,
-                     f"📄 Твой текущий профиль:\n\n_{get_profile()}_\n\nЧтобы изменить, напиши: `/profile Твои новые навыки`",
-                     parse_mode="Markdown")
+        bot.reply_to(
+            message,
+            f"📄 Твой текущий профиль:\n\n_{get_profile()}_\n\n"
+            "Чтобы изменить, напиши: `/profile Твои новые навыки`",
+            parse_mode="Markdown",
+        )
 
-
-@bot.message_handler(commands=['find'])
+@bot.message_handler(commands=["find"])
 def find_jobs(message):
-    query = message.text.replace('/find', '', 1).strip()
+    query = message.text.replace("/find", "", 1).strip()
     if not query:
         bot.reply_to(message, "❌ Укажи запрос. Пример: `/find python junior удаленно`")
         return
 
-    bot.reply_to(message, "⏳ Ищу свежие вакансии на hh.ru и анализирую их... (это займет ~10 секунд)")
+    bot.reply_to(message, "⏳ Ищу вакансии на hh.ru и анализирую их... (это займет ~10 секунд)")
 
     vacancies = search_hh_vacancies(query)
 
     if not vacancies:
-        bot.reply_to(message,
-                     "😕 По запросу ничего не найдено за последние 24 часа. Попробуй изменить формулировку (например, убери 'junior' или добавь город).")
+        bot.reply_to(
+            message,
+            "😕 По запросу ничего не найдено. Попробуй изменить формулировку "
+            "(например, убери 'junior', напиши город отдельно или используй синонимы).",
+        )
         return
 
     vacancies_text = "\n---\n".join(vacancies)
-    ai_response = get_ai_response(query, message.chat.id, is_job_search=True, vacancies_text=vacancies_text)
+    ai_response = get_ai_response(
+        query, message.chat.id, is_job_search=True, vacancies_text=vacancies_text
+    )
 
-    # Отправляем ответ частями, если он слишком длинный для Telegram (лимит 4096 символов)
     if len(ai_response) > 4000:
-        bot.reply_to(message, ai_response[:4000] + "\n\n...(сообщение обрезано из-за длины, но письмо выше)")
+        bot.reply_to(message, ai_response[:4000] + "\n\n...(сообщение обрезано из-за длины)")
     else:
         bot.reply_to(message, ai_response)
 
-
-@bot.message_handler(content_types=['text'])
+@bot.message_handler(content_types=["text"])
 def handle_message(message):
     user_id = message.chat.id
     user_text = message.text.strip()
 
-    if not user_text or user_text.startswith('/'):
+    if not user_text or user_text.startswith("/"):
         return
 
     add_to_context(user_id, user_text)
@@ -270,24 +278,21 @@ def handle_message(message):
 
     bot.reply_to(message, ai_response)
 
-
 # ==========================================================
 # WEBHOOK (для PythonAnywhere)
 # ==========================================================
 
 app = Flask(__name__)
 
-
-@app.route('/' + os.getenv("BOT_TOKEN"), methods=['POST'])
+@app.route("/" + os.getenv("BOT_TOKEN"), methods=["POST"])
 def webhook():
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
+    if request.headers.get("content-type") == "application/json":
+        json_string = request.get_data().decode("utf-8")
         update = telebot.types.Update.de_json(json_string)
         bot.process_new_updates([update])
-        return '', 200
+        return "", 200
     else:
-        return 'Error', 403
-
+        return "Error", 403
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=False)
