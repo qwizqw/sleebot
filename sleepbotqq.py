@@ -184,6 +184,19 @@ def send_welcome(message):
         "📋 Используй /q, чтобы вывести все свои записи (время +3ч).",
     )
 
+@bot.message_handler(commands=['help'])
+def send_help(message):
+    help_text = (
+        "🤖 **Доступные команды:**\n\n"
+        "📝 *Просто напиши текст* — я запомню это как запись в дневнике и дам совет.\n"
+        "🔍 `/find <запрос>` — найти вакансии на hh.ru и получить готовое сопроводительное письмо.\n"
+        "📋 `/q` — вывести все твои записи (время сдвинуто на +3ч).\n"
+        "⚙️ `/profile <текст>` — обновить информацию о твоих навыках и целях для поиска работы.\n"
+        "🗑️ `/clear` — очистить историю записей.\n"
+        "❓ `/help` — показать это сообщение."
+    )
+    bot.reply_to(message, help_text, parse_mode="Markdown")
+
 @bot.message_handler(commands=["clear"])
 def clear_context(message):
     context = load_context()
