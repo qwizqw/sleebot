@@ -78,32 +78,49 @@ def save_profile(text):
 
 def search_hh_vacancies(query):
     try:
-        # Кодируем запрос для URL и добавляем User-Agent, чтобы hh.ru не блокировал
+        # Кодируем запрос для URL
         encoded_query = urllib.parse.quote(query)
-        url = f"https://search.hh.ru/vacancy/rss?text={encoded_query}&period=1"  # period=1: только за последние 24 часа
+        # Используем официальный API hh.ru (бесплатный, без ограничений по времени)
+        url = f"https://api.hh.ru/vacancies?text={encoded_query}&per_page=5&order_by=publication_time"
 
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        req = urllib.request.Request(url, headers={'User-Agent': 'SleepBot/1.0 (qwizqw@example.com)'})
         with urllib.request.urlopen(req) as response:
-            xml_data = response.read()
+            data = json.loads(response.read().decode('utf-8'))
 
-        root = ET.fromstring(xml_data)
         vacancies = []
 
-        # Берем максимум 3 свежие вакансии, чтобы не перегружать нейросеть
-        for item in root.findall('.//item')[:3]:
-            title = item.find('title').text
-            link = item.find('link').text
-            # Описание в RSS часто содержит HTML, берем первые 200 символов для анализа
-            desc = item.find('description').text
-            clean_desc = desc[:300].replace('\n', ' ').strip() + "..."
-            vacancies.append(f"Название: {title}\nОписание: {clean_desc}\nСсылка: {link}")
+        # Берем до 5 вакансий
+        for item in data.get('items', [])[:5]:
+            title = item.get('name', 'Без названия')
+            employer = item.get('employer', {}).get('name', 'Неизвестный работодатель')
+            link = item.get('alternate_url', '')
+
+            # Зарплата (если указана)
+            salary = item.get('salary')
+            if salary:
+                salary_from = salary.get('from', '')
+                salary_to = salary.get('to', '')
+                currency = salary.get('currency', 'RUR')
+                if salary_from and salary_to:
+                    salary_text = f"{salary_from}-{salary_to} {currency}"
+                elif salary_from:
+                    salary_text = f"от {salary_from} {currency}"
+                elif salary_to:
+                    salary_text = f"до {salary_to} {currency}"
+                else:
+                    salary_text = "Зарплата не указана"
+            else:
+                salary_text = "Зарплата не указана"
+
+            # Город
+            area = item.get('area', {}).get('name', 'Не указан')
+
+            vacancies.append(f"📌 {title}\n🏢 {employer}\n📍 {area}\n💰 {salary_text}\n🔗 {link}")
 
         return vacancies
     except Exception as e:
         print(f"Ошибка поиска hh.ru: {e}")
         return []
-
-
 # ==========================================================
 # ИНТЕГРАЦИЯ С НЕЙРОСЕТЬЮ
 # ==========================================================
